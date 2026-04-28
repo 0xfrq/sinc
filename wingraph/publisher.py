@@ -44,7 +44,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 msg = line.strip().decode(errors="ignore")
                 if msg == "GAMEOVER":
                     print(f"  [event] GAMEOVER from {addr}, broadcasting to others")
-                    broadcast("SHOW2", exclude=conn)
+                    broadcast("SHOW", exclude=conn)
     except OSError:
         pass
     finally:
