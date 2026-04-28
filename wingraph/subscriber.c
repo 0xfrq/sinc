@@ -19,6 +19,7 @@ static HBITMAP  g_hBitmap2 = NULL;
 
 static HWND     g_hwnd    = NULL;
 static BOOL     g_visible = FALSE;
+static SOCKET   g_sock    = INVALID_SOCKET;
 
 #define WM_APP_SHOW  (WM_APP + 1)
 #define WM_APP_HIDE  (WM_APP + 2)
@@ -104,6 +105,38 @@ static int read_line(SOCKET s, char *buf, int maxlen)
     return total;
 }
 
+static void send_gameover(SOCKET sock)
+{
+    const char *msg = "GAMEOVER\n";
+    send(sock, msg, (int)strlen(msg), 0);
+}
+
+typedef struct {
+    NetArgs *netArgs;
+} InputThreadArgs;
+
+static DWORD WINAPI InputThread(LPVOID param)
+{
+    char buf[512];
+    while (TRUE) {
+        printf("Enter answer (or 'gameover'): ");
+        fflush(stdout);
+        if (!fgets(buf, sizeof(buf), stdin)) break;
+        int len = (int)strlen(buf);
+        while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+
+        if (_stricmp(buf, "gameover") == 0) {
+            if (g_sock != INVALID_SOCKET) {
+                send_gameover(g_sock);
+                printf("[input] GAMEOVER sent to server\n");
+            } else {
+                printf("[input] not connected\n");
+            }
+        }
+    }
+    return 0;
+}
+
 static DWORD WINAPI NetworkThread(LPVOID param)
 {
     NetArgs *args = (NetArgs *)param;
@@ -125,6 +158,7 @@ static DWORD WINAPI NetworkThread(LPVOID param)
             continue;
         }
 
+        g_sock = sock;
         printf("[net] connected to %s:%d\n", args->host, args->port);
 
         char line[64];
@@ -137,11 +171,13 @@ static DWORD WINAPI NetworkThread(LPVOID param)
             else if (strcmp(line, "HIDE")  == 0) PostMessage(g_hwnd, WM_APP_HIDE,  0, 0);
             else if (strcmp(line, "EXIT")  == 0) {
                 PostMessage(g_hwnd, WM_APP_EXIT, 0, 0);
+                g_sock = INVALID_SOCKET;
                 closesocket(sock);
                 return 0;
             }
         }
 
+        g_sock = INVALID_SOCKET;
         closesocket(sock);
         printf("[net] disconnected, retrying in 2 s...\n");
         Sleep(2000);
@@ -285,12 +321,19 @@ int main(void)
         NULL, NULL, hInst, NULL
     );
 
-    HANDLE hThread = CreateThread(NULL, 0, NetworkThread, (LPVOID)&netArgs, 0, NULL);
-    if (!hThread) {
+    HANDLE hNetThread = CreateThread(NULL, 0, NetworkThread, (LPVOID)&netArgs, 0, NULL);
+    if (!hNetThread) {
         fprintf(stderr, "Failed to create network thread\n");
         return 1;
     }
-    CloseHandle(hThread);
+    CloseHandle(hNetThread);
+
+    HANDLE hInputThread = CreateThread(NULL, 0, InputThread, NULL, 0, NULL);
+    if (!hInputThread) {
+        fprintf(stderr, "Failed to create input thread\n");
+        return 1;
+    }
+    CloseHandle(hInputThread);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
